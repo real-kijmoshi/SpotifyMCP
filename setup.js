@@ -140,7 +140,7 @@ async function main() {
   console.log('  2. Log in with your Spotify account');
   console.log('  3. Click "Create App"');
   console.log('  4. Set a name (e.g. "spotifyMCP") and description');
-  console.log('  5. Add Redirect URI: (will be shown after you enter Client ID)');
+  console.log('  5. Leave Redirect URI empty for now (shown after Client ID)');
   console.log('  6. Click "Save"');
   console.log('  7. Copy your Client ID from the app settings page');
   console.log('');
@@ -208,13 +208,20 @@ async function main() {
       redirectUri = `${tunnelUrl}/callback`;
 
       console.log('');
-      console.log(`  Redirect URI: ${redirectUri}`);
+      console.log('===========================================');
+      console.log('  ADD THIS REDIRECT URI TO SPOTIFY APP:');
+      console.log(`  ${redirectUri}`);
+      console.log('===========================================');
       console.log('');
-      console.log('  Add this Redirect URI to your Spotify app, then continue.');
+      console.log('  1. Go to https://developer.spotify.com/dashboard');
+      console.log('  2. Open your app settings');
+      console.log('  3. Add Redirect URI: ' + redirectUri);
+      console.log('  4. Click Save');
+      console.log('  5. Come back here and press Enter');
       console.log('');
     } catch (err) {
       console.error(`  Tunnel failed: ${err.message}`);
-      console.log('  Falling back to localhost redirect (you may need SSH tunnel).');
+      console.log('  Falling back to localhost redirect.');
       redirectUri = existing.REDIRECT_URI || 'http://127.0.0.1:3080/callback';
     }
   } else {
