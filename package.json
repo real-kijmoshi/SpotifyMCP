@@ -1,0 +1,29 @@
+{
+  "name": "spotify-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for Spotify — playback, search, playlists, library, and more",
+  "type": "module",
+  "bin": {
+    "spotify-mcp": "./src/index.js",
+    "spotify-mcp-setup": "./setup.js"
+  },
+  "scripts": {
+    "setup": "node setup.js",
+    "start": "node src/index.js --stdio",
+    "start:http": "node src/index.js --port 3000",
+    "start:tunnel": "node src/index.js --port 3000 --tunnel",
+    "service:install": "pm2 start src/index.js --name spotify-mcp -- --port 3000 --tunnel && pm2 save",
+    "service:stop": "pm2 stop spotify-mcp",
+    "service:restart": "pm2 restart spotify-mcp",
+    "service:logs": "pm2 logs spotify-mcp",
+    "service:status": "pm2 status spotify-mcp",
+    "service:remove": "pm2 delete spotify-mcp && pm2 save"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.24.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
