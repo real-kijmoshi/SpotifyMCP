@@ -253,6 +253,17 @@ async function main() {
       const { url: tunnelUrl, proc } = await startAuthTunnel(3080);
       authTunnelProc = proc;
 
+      // Verify tunnel can reach the auth server
+      console.log('  Verifying tunnel connectivity...');
+      try {
+        const healthRes = await fetch(`${tunnelUrl}/health`);
+        const healthData = await healthRes.json();
+        console.log(`  Tunnel health check: ${JSON.stringify(healthData)}`);
+      } catch (err) {
+        console.log(`  WARNING: Tunnel health check failed: ${err.message}`);
+        console.log('  The tunnel may not be fully ready yet.');
+      }
+
       const tunnelRedirect = `${tunnelUrl}/callback`;
       console.log('');
       console.log('===========================================');
