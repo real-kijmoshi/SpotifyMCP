@@ -73,42 +73,43 @@ function ensurePm2() {
   }
 }
 
-function pm2Start(scriptPath, name, args, env) {
-  const existing = execSync('pm2 list --no-color 2>/dev/null || true', {
-    encoding: 'utf-8',
+function startAuthTunnel(port) {
+  return new Promise((resolve, reject) => {
+    if (!hasCommand('cloudflared')) {
+      reject(new Error('cloudflared not found. Install it: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/'));
+      return;
+    }
+
+    const proc = spawn('cloudflared', ['tunnel', '--url', `http://localhost:${port}`], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let resolved = false;
+
+    proc.stdout.on('data', (chunk) => {
+      const text = chunk.toString();
+      process.stderr.write(text);
+      if (!resolved) {
+        const match = text.match(/(https:\/\/[a-zA-Z0-9\-]+\.trycloudflare\.com)/);
+        if (match) {
+          resolved = true;
+          resolve({ url: match[1], proc });
+        }
+      }
+    });
+
+    proc.stderr.on('data', (chunk) => {
+      process.stderr.write(chunk);
+    });
+
+    proc.on('error', (err) => {
+      if (!resolved) reject(err);
+    });
+
+    proc.on('exit', (code) => {
+      if (!resolved) reject(new Error(`cloudflared exited with code ${code}`));
+    });
   });
-  if (existing.includes(name)) {
-    execSync(`pm2 delete ${name}`, { stdio: 'ignore' });
-  }
-
-  const envArgs = Object.entries(env)
-    .map(([k, v]) => `${k}=${v}`)
-    .join(',');
-
-  const cmd = [
-    'pm2', 'start', scriptPath,
-    '--name', name,
-    '--',
-    ...args,
-  ];
-
-  const proc = spawn('node', [
-    scriptPath,
-    ...args,
-  ], {
-    cwd: ROOT,
-    env: { ...process.env, ...env },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    detached: true,
-  });
-
-  // Use pm2 directly
-  execSync(`pm2 delete ${name} 2>/dev/null || true`, { stdio: 'ignore' });
-
-  const pm2Cmd = `pm2 start "${scriptPath}" --name "${name}" --cwd "${ROOT}" -- ${args.join(' ')}`;
-  execSync(pm2Cmd, { stdio: 'inherit', env: { ...process.env, ...env } });
-
-  execSync('pm2 save', { stdio: 'ignore' });
 }
 
 async function main() {
@@ -132,26 +133,6 @@ async function main() {
   );
   const isServer = location.toLowerCase() === 'server';
 
-  let serverIp = '';
-  if (isServer) {
-    serverIp = await prompt(
-      rl,
-      '? Server IP or hostname (e.g. 10.0.0.5 or myserver.com): ',
-      existing.SERVER_IP || ''
-    );
-    if (!serverIp) {
-      console.error('Error: Server IP is required for server mode.');
-      rl.close();
-      process.exit(1);
-    }
-  }
-
-  // Build redirect URI based on location
-  // Spotify requires HTTPS for non-localhost addresses
-  const defaultRedirect = existing.REDIRECT_URI || (isServer
-    ? `https://${serverIp}:3080/callback`
-    : 'http://127.0.0.1:3080/callback');
-
   console.log('');
   console.log('  You need a Spotify Developer app to use this server.');
   console.log('');
@@ -159,7 +140,7 @@ async function main() {
   console.log('  2. Log in with your Spotify account');
   console.log('  3. Click "Create App"');
   console.log('  4. Set a name (e.g. "spotifyMCP") and description');
-  console.log(`  5. Add Redirect URI: ${defaultRedirect}`);
+  console.log('  5. Add Redirect URI: (will be shown after you enter Client ID)');
   console.log('  6. Click "Save"');
   console.log('  7. Copy your Client ID from the app settings page');
   console.log('');
@@ -180,12 +161,6 @@ async function main() {
     rl,
     `? Spotify Client Secret (optional, not needed for PKCE)${existing.SPOTIFY_CLIENT_SECRET ? ' [set]' : ''}: `,
     existing.SPOTIFY_CLIENT_SECRET || ''
-  );
-
-  const redirectUri = await prompt(
-    rl,
-    `? Redirect URI [${defaultRedirect}]: `,
-    defaultRedirect
   );
 
   const defaultPort = existing.MCP_PORT || '3000';
@@ -218,6 +193,41 @@ async function main() {
     console.log('');
   }
 
+  // For server mode: start a cloudflared tunnel for the OAuth callback
+  let redirectUri;
+  let authTunnelProc = null;
+
+  if (isServer) {
+    console.log('');
+    console.log('  Starting OAuth callback tunnel (for HTTPS redirect)...');
+    console.log('');
+
+    try {
+      const { url: tunnelUrl, proc } = await startAuthTunnel(3080);
+      authTunnelProc = proc;
+      redirectUri = `${tunnelUrl}/callback`;
+
+      console.log('');
+      console.log(`  Redirect URI: ${redirectUri}`);
+      console.log('');
+      console.log('  Add this Redirect URI to your Spotify app, then continue.');
+      console.log('');
+    } catch (err) {
+      console.error(`  Tunnel failed: ${err.message}`);
+      console.log('  Falling back to localhost redirect (you may need SSH tunnel).');
+      redirectUri = existing.REDIRECT_URI || 'http://127.0.0.1:3080/callback';
+    }
+  } else {
+    redirectUri = existing.REDIRECT_URI || 'http://127.0.0.1:3080/callback';
+  }
+
+  const redirectUriInput = await prompt(
+    rl,
+    `? Redirect URI [${redirectUri}]: `,
+    redirectUri
+  );
+  redirectUri = redirectUriInput;
+
   // Write .env
   const envContent = [
     `SPOTIFY_CLIENT_ID=${clientId}`,
@@ -225,14 +235,13 @@ async function main() {
     `REDIRECT_URI=${redirectUri}`,
     `MCP_PORT=${mcpPort}`,
     `LOCATION=${location}`,
-    isServer ? `SERVER_IP=${serverIp}` : '# SERVER_IP=',
+    isServer ? `SERVER_IP=auto` : '# SERVER_IP=',
     webhookUrl ? `WEBHOOK_URL=${webhookUrl}` : '# WEBHOOK_URL=',
     apiKey ? `MCP_API_KEY=${apiKey}` : '# MCP_API_KEY=',
     '',
   ].join('\n');
 
   fs.writeFileSync(ENV_PATH, envContent);
-  console.log('');
   console.log('  Configuration saved to .env');
 
   // OAuth flow
@@ -273,18 +282,25 @@ async function main() {
     console.log('  Tokens saved to .spotify-auth.json');
   } catch (err) {
     console.error(`  Authorization failed: ${err.message}`);
+    // Kill auth tunnel if running
+    if (authTunnelProc) authTunnelProc.kill();
     rl.close();
     process.exit(1);
   }
 
-  // Ask about tunnel
+  // Kill auth tunnel - no longer needed
+  if (authTunnelProc) {
+    authTunnelProc.kill();
+    console.log('  Auth tunnel closed.');
+  }
+
+  // Ask about tunnel for MCP server
   console.log('');
   const useTunnel = await prompt(
     rl,
-    `? Expose via public tunnel? (y/n) [y]: `,
+    `? Expose MCP server via public tunnel? (y/n) [y]: `,
     'y'
   );
-
   const wantsTunnel = useTunnel.toLowerCase() !== 'n';
 
   // Ask about pm2
@@ -294,17 +310,14 @@ async function main() {
     `? Run as background service with pm2? (y/n) [y]: `,
     'y'
   );
-
   const wantsPm2 = usePm2.toLowerCase() !== 'n';
 
   rl.close();
 
-  // Ensure pm2 if needed
   if (wantsPm2) {
     ensurePm2();
   }
 
-  // Start the server
   console.log('');
   console.log('===========================================');
   console.log('  Starting Spotify MCP server...');
@@ -320,7 +333,6 @@ async function main() {
 
     const pm2Name = 'spotify-mcp';
     execSync(`pm2 delete ${pm2Name} 2>/dev/null || true`, { stdio: 'ignore' });
-
     const pm2Cmd = `pm2 start "${indexScript}" --name "${pm2Name}" --cwd "${ROOT}" -- ${args.join(' ')}`;
     execSync(pm2Cmd, { stdio: 'inherit' });
     execSync('pm2 save', { stdio: 'ignore' });
@@ -336,7 +348,6 @@ async function main() {
     console.log('    pm2 delete spotify-mcp   # remove');
     console.log('');
   } else {
-    // Foreground with tunnel
     const args = ['src/index.js', '--port', port, '--host', '127.0.0.1'];
     if (wantsTunnel) args.push('--tunnel');
 
@@ -346,11 +357,9 @@ async function main() {
 
     const child = spawn('node', args, { cwd: ROOT, stdio: 'inherit' });
     child.on('close', () => process.exit(0));
-
     process.on('SIGINT', () => { child.kill(); process.exit(0); });
     process.on('SIGTERM', () => { child.kill(); process.exit(0); });
-
-    return; // don't print final instructions, server is running
+    return;
   }
 
   // Print connection instructions
@@ -371,7 +380,12 @@ async function main() {
     console.log('  {');
     console.log('    "mcpServers": {');
     console.log('      "spotify": {');
-    console.log('        "url": "<tunnel-url>/mcp"');
+    console.log('        "url": "<tunnel-url>/mcp",');
+    if (apiKey) {
+      console.log('        "headers": {');
+      console.log(`          "Authorization": "Bearer ${apiKey}"`);
+      console.log('        }');
+    }
     console.log('      }');
     console.log('    }');
     console.log('  }');
@@ -385,15 +399,6 @@ async function main() {
     console.log(
       `        "args": ["${path.join(ROOT, 'src', 'index.js')}", "--stdio"]`
     );
-    console.log('      }');
-    console.log('    }');
-    console.log('  }');
-    console.log('');
-    console.log('  Or HTTP mode:');
-    console.log('  {');
-    console.log('    "mcpServers": {');
-    console.log('      "spotify": {');
-    console.log(`        "url": "http://localhost:${port}/mcp"`);
     console.log('      }');
     console.log('    }');
     console.log('  }');
