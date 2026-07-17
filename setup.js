@@ -147,8 +147,9 @@ async function main() {
   }
 
   // Build redirect URI based on location
+  // Spotify requires HTTPS for non-localhost addresses
   const defaultRedirect = existing.REDIRECT_URI || (isServer
-    ? `http://${serverIp}:3080/callback`
+    ? `https://${serverIp}:3080/callback`
     : 'http://127.0.0.1:3080/callback');
 
   console.log('');

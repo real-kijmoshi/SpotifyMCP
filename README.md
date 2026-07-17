@@ -98,13 +98,18 @@ npm run service:remove     # remove service
 2. Log in with your Spotify account
 3. Click **Create App**
 4. Set a name (e.g. "spotifyMCP") and description
-5. Add Redirect URI: `http://127.0.0.1:3080/callback` (or `http://YOUR-SERVER-IP:3080/callback`)
+5. Add Redirect URI: `http://127.0.0.1:3080/callback` (local) or `https://YOUR-SERVER-IP:3080/callback` (server)
 6. Click **Save**
 7. Copy your **Client ID** from the app settings page
 
 ## Server Setup
 
-When running on a remote server, the setup script asks for your server's IP/hostname. It uses that to build the redirect URI (e.g. `http://10.0.0.5:3080/callback`) so the browser OAuth callback reaches the server directly. Make sure port 3080 is open for the initial auth.
+When running on a remote server, the setup uses HTTPS with a self-signed certificate for the OAuth callback. Spotify requires HTTPS for non-localhost redirect URIs.
+
+- The server generates a self-signed cert automatically (stored in `.certs/`)
+- Your browser will show a security warning on first auth — click through to proceed
+- The redirect URI will be `https://YOUR-SERVER-IP:3080/callback`
+- Make sure port 3080 is open for the initial auth
 
 ## Tools (34)
 
