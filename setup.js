@@ -198,37 +198,13 @@ async function main() {
     console.log('');
   }
 
-  // For server mode: start a cloudflared tunnel for the OAuth callback
+  // For server mode: start auth server first, then tunnel to it
   let redirectUri;
   let authTunnelProc = null;
+  let authServerHandle = null;
 
   if (isServer) {
-    console.log('');
-    console.log('  Starting OAuth callback tunnel (for HTTPS redirect)...');
-    console.log('');
-
-    try {
-      const { url: tunnelUrl, proc } = await startAuthTunnel(3080);
-      authTunnelProc = proc;
-      redirectUri = `${tunnelUrl}/callback`;
-
-      console.log('');
-      console.log('===========================================');
-      console.log('  ADD THIS REDIRECT URI TO SPOTIFY APP:');
-      console.log(`  ${redirectUri}`);
-      console.log('===========================================');
-      console.log('');
-      console.log('  1. Go to https://developer.spotify.com/dashboard');
-      console.log('  2. Open your app settings');
-      console.log('  3. Add Redirect URI: ' + redirectUri);
-      console.log('  4. Click Save');
-      console.log('  5. Come back here and press Enter');
-      console.log('');
-    } catch (err) {
-      console.error(`  Tunnel failed: ${err.message}`);
-      console.log('  Falling back to localhost redirect.');
-      redirectUri = existing.REDIRECT_URI || 'http://127.0.0.1:3080/callback';
-    }
+    redirectUri = existing.REDIRECT_URI || 'http://127.0.0.1:3080/callback';
   } else {
     redirectUri = existing.REDIRECT_URI || 'http://127.0.0.1:3080/callback';
   }
@@ -263,6 +239,47 @@ async function main() {
 
   const codeVerifier = generateCodeVerifier();
   const codeChallenge = await generateCodeChallenge(codeVerifier);
+
+  // Start auth server listener FIRST
+  console.log('  Starting callback listener...');
+  authServerHandle = await startAuthServer(redirectUri);
+  const authPromise = authServerHandle.promise;
+
+  // For server mode: start tunnel to the running server, then build auth URL with tunnel redirect
+  if (isServer) {
+    console.log('');
+    console.log('  Starting OAuth tunnel...');
+    try {
+      const { url: tunnelUrl, proc } = await startAuthTunnel(3080);
+      authTunnelProc = proc;
+
+      const tunnelRedirect = `${tunnelUrl}/callback`;
+      console.log('');
+      console.log('===========================================');
+      console.log('  ADD THIS REDIRECT URI TO SPOTIFY APP:');
+      console.log(`  ${tunnelRedirect}`);
+      console.log('===========================================');
+      console.log('');
+      console.log('  1. Go to https://developer.spotify.com/dashboard');
+      console.log('  2. Open your app settings');
+      console.log('  3. Add Redirect URI: ' + tunnelRedirect);
+      console.log('  4. Click Save');
+      console.log('');
+
+      // Update .env and redirectUri with the tunnel URL
+      const updatedEnv = envContent.replace(
+        `REDIRECT_URI=${redirectUri}`,
+        `REDIRECT_URI=${tunnelRedirect}`
+      );
+      fs.writeFileSync(ENV_PATH, updatedEnv);
+      redirectUri = tunnelRedirect;
+    } catch (err) {
+      console.error(`  Tunnel failed: ${err.message}`);
+      console.log('  Using localhost redirect.');
+    }
+  }
+
+  // Build auth URL AFTER redirectUri is finalized (tunnel URL in server mode)
   const authUrl = buildAuthorizationUrl(clientId, redirectUri, codeChallenge);
 
   console.log('  Open this URL in your browser to authorize:');
@@ -278,7 +295,7 @@ async function main() {
   console.log('');
 
   try {
-    const code = await startAuthServer(redirectUri);
+    const code = await authPromise;
     console.log('  Authorization code received! Exchanging for tokens...');
 
     const tokens = await exchangeCodeForTokens(
