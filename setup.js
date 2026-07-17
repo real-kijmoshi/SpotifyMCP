@@ -276,6 +276,11 @@ async function main() {
       console.log('  3. Add Redirect URI: ' + tunnelRedirect);
       console.log('  4. Click Save');
       console.log('');
+      console.log('  IMPORTANT: The URL changes every time you run setup.');
+      console.log('  Make sure you add the EXACT URL shown above.');
+      console.log('');
+
+      await prompt(rl, '  Press Enter after adding the redirect URI to Spotify... ');
 
       // Update .env and redirectUri with the tunnel URL
       const updatedEnv = envContent.replace(
@@ -307,7 +312,9 @@ async function main() {
 
   try {
     const code = await authPromise;
-    console.log('  Authorization code received! Exchanging for tokens...');
+    console.log(`  Authorization code received!`);
+    console.log(`  Exchanging for tokens...`);
+    console.log(`  redirect_uri: ${redirectUri}`);
 
     const tokens = await exchangeCodeForTokens(
       clientId,
