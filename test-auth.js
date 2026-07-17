@@ -31,7 +31,7 @@ async function main() {
   log(`  Local fetch: ${localRes.status} - ${await localRes.text()}`);
 
   // Start cloudflared
-  const proc = spawn('cloudflared', ['tunnel', '--url', `http://localhost:${PORT}`], {
+      const proc = spawn('cloudflared', ['tunnel', '--config', '/dev/null', '--url', `http://localhost:${PORT}`], {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 

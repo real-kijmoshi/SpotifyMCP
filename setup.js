@@ -80,7 +80,7 @@ function startAuthTunnel(port) {
       return;
     }
 
-    const proc = spawn('cloudflared', ['tunnel', '--url', `http://localhost:${port}`], {
+    const proc = spawn('cloudflared', ['tunnel', '--config', '/dev/null', '--url', `http://localhost:${port}`], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
