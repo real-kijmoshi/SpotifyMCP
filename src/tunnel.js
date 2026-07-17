@@ -20,20 +20,18 @@ export function startTunnel(port) {
       let resolved = false;
 
       proc.stdout.on('data', (chunk) => {
+        if (resolved) return;
         const text = chunk.toString();
-        process.stderr.write(text);
-        if (!resolved) {
-          const match = text.match(/(https:\/\/[a-zA-Z0-9\-]+\.trycloudflare\.com)/);
-          if (match) {
-            resolved = true;
-            resolve({ url: match[1], proc, type: 'cloudflared' });
-          }
+        const match = text.match(/(https:\/\/[a-zA-Z0-9\-]+\.trycloudflare\.com)/);
+        if (match) {
+          resolved = true;
+          proc.stdout.removeAllListeners('data');
+          proc.stderr.removeAllListeners('data');
+          resolve({ url: match[1], proc, type: 'cloudflared' });
         }
       });
 
-      proc.stderr.on('data', (chunk) => {
-        process.stderr.write(chunk);
-      });
+      proc.stderr.on('data', () => {});
 
       proc.on('error', (err) => {
         if (!resolved) reject(err);
@@ -54,20 +52,18 @@ export function startTunnel(port) {
     let resolved = false;
 
     proc.stdout.on('data', (chunk) => {
+      if (resolved) return;
       const text = chunk.toString();
-      process.stderr.write(text);
-      if (!resolved) {
-        const match = text.match(/(https:\/\/[a-zA-Z0-9\-]+\.loca\.lt)/);
-        if (match) {
-          resolved = true;
-          resolve({ url: match[1], proc, type: 'localtunnel' });
-        }
+      const match = text.match(/(https:\/\/[a-zA-Z0-9\-]+\.loca\.lt)/);
+      if (match) {
+        resolved = true;
+        proc.stdout.removeAllListeners('data');
+        proc.stderr.removeAllListeners('data');
+        resolve({ url: match[1], proc, type: 'localtunnel' });
       }
     });
 
-    proc.stderr.on('data', (chunk) => {
-      process.stderr.write(chunk);
-    });
+    proc.stderr.on('data', () => {});
 
     proc.on('error', (err) => {
       if (!resolved) reject(err);

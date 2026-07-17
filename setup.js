@@ -87,20 +87,19 @@ function startAuthTunnel(port) {
     let resolved = false;
 
     proc.stdout.on('data', (chunk) => {
+      if (resolved) return;
       const text = chunk.toString();
-      process.stderr.write(text);
-      if (!resolved) {
-        const match = text.match(/(https:\/\/[a-zA-Z0-9\-]+\.trycloudflare\.com)/);
-        if (match) {
-          resolved = true;
-          resolve({ url: match[1], proc });
-        }
+      const match = text.match(/(https:\/\/[a-zA-Z0-9\-]+\.trycloudflare\.com)/);
+      if (match) {
+        resolved = true;
+        // Kill remaining cloudflared output, just let it run silently
+        proc.stdout.removeAllListeners('data');
+        proc.stderr.removeAllListeners('data');
+        resolve({ url: match[1], proc });
       }
     });
 
-    proc.stderr.on('data', (chunk) => {
-      process.stderr.write(chunk);
-    });
+    proc.stderr.on('data', () => {});
 
     proc.on('error', (err) => {
       if (!resolved) reject(err);
