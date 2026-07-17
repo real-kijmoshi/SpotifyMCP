@@ -20,7 +20,9 @@ export function startTunnel(port) {
       let resolved = false;
       let buf = '';
 
-      proc.stdout.on('data', (chunk) => {
+      proc.stdout.on('data', () => {});
+
+      proc.stderr.on('data', (chunk) => {
         if (resolved) return;
         buf += chunk.toString();
         const match = buf.match(/(https:\/\/[a-zA-Z0-9\-]+\.trycloudflare\.com)/);
@@ -31,8 +33,6 @@ export function startTunnel(port) {
           resolve({ url: match[1], proc, type: 'cloudflared' });
         }
       });
-
-      proc.stderr.on('data', () => {});
 
       proc.on('error', (err) => {
         if (!resolved) {
