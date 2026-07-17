@@ -18,11 +18,12 @@ export function startTunnel(port) {
       });
 
       let resolved = false;
+      let buf = '';
 
       proc.stdout.on('data', (chunk) => {
         if (resolved) return;
-        const text = chunk.toString();
-        const match = text.match(/(https:\/\/[a-zA-Z0-9\-]+\.trycloudflare\.com)/);
+        buf += chunk.toString();
+        const match = buf.match(/(https:\/\/[a-zA-Z0-9\-]+\.trycloudflare\.com)/);
         if (match) {
           resolved = true;
           proc.stdout.removeAllListeners('data');
@@ -34,11 +35,17 @@ export function startTunnel(port) {
       proc.stderr.on('data', () => {});
 
       proc.on('error', (err) => {
-        if (!resolved) reject(err);
+        if (!resolved) {
+          process.stderr.write(buf);
+          reject(err);
+        }
       });
 
       proc.on('exit', (code) => {
-        if (!resolved) reject(new Error(`cloudflared exited with code ${code}`));
+        if (!resolved) {
+          process.stderr.write(buf);
+          reject(new Error(`cloudflared exited with code ${code}`));
+        }
       });
 
       return;
