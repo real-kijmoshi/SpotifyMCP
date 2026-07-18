@@ -22,11 +22,14 @@ function checkAuth(req, apiKey) {
   return crypto.timingSafeEqual(Buffer.from(token), Buffer.from(apiKey));
 }
 
+function jsonError(res, status, message) {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: message }));
+}
+
 async function handlePost(req, res, serverFactory, apiKey) {
   if (!checkAuth(req, apiKey)) {
-    res.writeHead(401, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Unauthorized' }));
-    return;
+    return jsonError(res, 401, 'Unauthorized — valid API key required');
   }
 
   const sessionId = req.headers['mcp-session-id'];
@@ -41,17 +44,11 @@ async function handlePost(req, res, serverFactory, apiKey) {
   try {
     body = JSON.parse(await readBody(req));
   } catch {
-    res.writeHead(400, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Invalid JSON' }));
-    return;
+    return jsonError(res, 400, 'Invalid JSON in request body');
   }
 
   if (!isInitializeRequest(body)) {
-    res.writeHead(400, { 'Content-Type': 'application/json' });
-    res.end(
-      JSON.stringify({ error: 'Bad Request: expected initialize request' })
-    );
-    return;
+    return jsonError(res, 400, 'Expected MCP initialize request');
   }
 
   const transport = new StreamableHTTPServerTransport({
@@ -74,39 +71,40 @@ async function handlePost(req, res, serverFactory, apiKey) {
 
 async function handleGet(req, res, apiKey) {
   if (!checkAuth(req, apiKey)) {
-    res.writeHead(401, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Unauthorized' }));
-    return;
+    return jsonError(res, 401, 'Unauthorized');
   }
 
   const sessionId = req.headers['mcp-session-id'];
   const transport = sessions.get(sessionId);
   if (!transport) {
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Session not found' }));
-    return;
+    return jsonError(res, 404, 'Session not found — send an initialize request first');
   }
   await transport.handleRequest(req, res);
 }
 
 async function handleDelete(req, res, apiKey) {
   if (!checkAuth(req, apiKey)) {
-    res.writeHead(401, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Unauthorized' }));
-    return;
+    return jsonError(res, 401, 'Unauthorized');
   }
 
   const sessionId = req.headers['mcp-session-id'];
   const transport = sessions.get(sessionId);
   if (!transport) {
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Session not found' }));
-    return;
+    return jsonError(res, 404, 'Session not found');
   }
   await transport.handleRequest(req, res);
 }
 
 export function startHttpServer(serverFactory, port, host = '127.0.0.1', apiKey = '') {
+  const c = {
+    bold: '\x1b[1m',
+    dim: '\x1b[2m',
+    green: '\x1b[32m',
+    cyan: '\x1b[36m',
+    gray: '\x1b[90m',
+    reset: '\x1b[0m',
+  };
+
   const server = http.createServer(async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader(
@@ -126,10 +124,15 @@ export function startHttpServer(serverFactory, port, host = '127.0.0.1', apiKey 
 
     const url = new URL(req.url, `http://${req.headers.host}`);
 
-    if (url.pathname !== '/mcp') {
-      res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Not found. Use POST /mcp' }));
+    // Health check
+    if (url.pathname === '/health') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'ok', sessions: sessions.size }));
       return;
+    }
+
+    if (url.pathname !== '/mcp') {
+      return jsonError(res, 404, `Not found — use POST ${c.cyan}/mcp${c.reset}`);
     }
 
     try {
@@ -146,14 +149,18 @@ export function startHttpServer(serverFactory, port, host = '127.0.0.1', apiKey 
     } catch (err) {
       console.error('Request error:', err);
       if (!res.headersSent) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Internal server error' }));
+        jsonError(res, 500, 'Internal server error');
       }
     }
   });
 
   server.listen(port, host, () => {
-    console.log(`Spotify MCP server running at http://${host}:${port}/mcp`);
+    const displayHost = host === '0.0.0.0' ? 'localhost' : host;
+    console.log(`${c.bold}${c.green}Spotify MCP${c.reset} running at ${c.cyan}http://${displayHost}:${port}/mcp${c.reset}`);
+    if (apiKey) {
+      console.log(`${c.gray}API Key required — include Authorization: Bearer <key>${c.reset}`);
+    }
+    console.log(`${c.gray}Health: http://${displayHost}:${port}/health${c.reset}`);
   });
 
   return server;

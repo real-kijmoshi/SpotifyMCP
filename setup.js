@@ -12,18 +12,14 @@ import {
 } from './src/auth/oauth.js';
 import { startAuthServer } from './src/auth/auth-server.js';
 import { saveTokens } from './src/auth/token-store.js';
+import {
+  c, line, header, step, success, warn, error, info,
+  highlight, code, muted, box, prompt, confirm, spinner, config,
+} from './src/ui.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = __dirname;
 const ENV_PATH = path.join(ROOT, '.env');
-
-function prompt(rl, question, defaultVal = '') {
-  return new Promise((resolve) => {
-    rl.question(question, (answer) => {
-      resolve(answer.trim() || defaultVal);
-    });
-  });
-}
 
 function loadExistingEnv() {
   const env = {};
@@ -68,8 +64,14 @@ function hasCommand(cmd) {
 
 function ensurePm2() {
   if (!hasCommand('pm2')) {
-    console.log('  Installing pm2 globally...');
-    execSync('npm install -g pm2', { stdio: 'inherit' });
+    const s = spinner('Installing pm2');
+    try {
+      execSync('npm install -g pm2', { stdio: 'ignore' });
+      s.succeed('pm2 installed');
+    } catch {
+      s.fail('Failed to install pm2');
+      throw new Error('pm2 installation failed');
+    }
   }
 }
 
@@ -103,14 +105,12 @@ function startAuthTunnel(port) {
 
     proc.on('error', (err) => {
       if (!resolved) {
-        process.stderr.write(buf);
         reject(err);
       }
     });
 
     proc.on('exit', (code) => {
       if (!resolved) {
-        process.stderr.write(buf);
         reject(new Error(`cloudflared exited with code ${code}`));
       }
     });
@@ -118,11 +118,8 @@ function startAuthTunnel(port) {
 }
 
 async function main() {
-  console.log('');
-  console.log('===========================================');
-  console.log('  Spotify MCP Server - Quickstart Setup');
-  console.log('===========================================');
-  console.log('');
+  process.stdout.write(header('Spotify MCP Server'));
+  process.stdout.write(`${muted('  Interactive setup wizard')}\n\n`);
 
   const existing = loadExistingEnv();
   const rl = readline.createInterface({
@@ -130,93 +127,82 @@ async function main() {
     output: process.stdout,
   });
 
-  // Ask where setup is running
+  let stepNum = 0;
+
+  // ── Step 1: Environment ──
+  process.stdout.write(step(++stepNum, 'Environment'));
   const location = await prompt(
     rl,
-    '? Running on (local / server)? [local]: ',
+    'Where are you running this?',
     existing.LOCATION || 'local'
   );
   const isServer = location.toLowerCase() === 'server';
+  process.stdout.write(info(`Mode: ${highlight(isServer ? 'Remote Server' : 'Local')}\n`));
 
-  console.log('');
-  console.log('  You need a Spotify Developer app to use this server.');
-  console.log('');
-  console.log('  1. Go to https://developer.spotify.com/dashboard');
-  console.log('  2. Log in with your Spotify account');
-  console.log('  3. Click "Create App"');
-  console.log('  4. Set a name (e.g. "spotifyMCP") and description');
-  console.log('  5. Leave Redirect URI empty for now (shown after Client ID)');
-  console.log('  6. Click "Save"');
-  console.log('  7. Copy your Client ID from the app settings page');
-  console.log('');
+  // ── Step 2: Spotify App ──
+  process.stdout.write(step(++stepNum, 'Spotify Developer App'));
+  process.stdout.write(`${muted('  You need a Spotify Developer app. If you don\'t have one:')}\n`);
+  process.stdout.write(`${muted('  1. Go to')} ${code('https://developer.spotify.com/dashboard')}\n`);
+  process.stdout.write(`${muted('  2. Click "Create App" and set a name')}\n`);
+  process.stdout.write(`${muted('  3. Copy the Client ID from app settings')}\n\n`);
 
   const clientId = await prompt(
     rl,
-    `? Spotify Client ID${existing.SPOTIFY_CLIENT_ID ? ` [${existing.SPOTIFY_CLIENT_ID}]` : ''}: `,
+    'Spotify Client ID',
     existing.SPOTIFY_CLIENT_ID || ''
   );
-
   if (!clientId) {
-    console.error('Error: Client ID is required.');
+    console.log(error('Client ID is required'));
     rl.close();
     process.exit(1);
   }
+  process.stdout.write(success(`Client ID: ${code(clientId)}\n`));
 
   const clientSecret = await prompt(
     rl,
-    `? Spotify Client Secret (optional, not needed for PKCE)${existing.SPOTIFY_CLIENT_SECRET ? ' [set]' : ''}: `,
+    'Spotify Client Secret (optional, not needed for PKCE)',
     existing.SPOTIFY_CLIENT_SECRET || ''
   );
+  if (clientSecret) {
+    process.stdout.write(success('Client secret set\n'));
+  } else {
+    process.stdout.write(info('No client secret (PKCE mode)\n'));
+  }
+
+  // ── Step 3: Server Config ──
+  process.stdout.write(step(++stepNum, 'Server Configuration'));
 
   const defaultPort = existing.MCP_PORT || '3000';
-  const mcpPort = await prompt(
-    rl,
-    `? MCP Server Port [${defaultPort}]: `,
-    defaultPort
-  );
+  const mcpPort = await prompt(rl, 'MCP Server Port', defaultPort);
 
   const webhookUrl = await prompt(
     rl,
-    `? Webhook URL (optional)${existing.WEBHOOK_URL ? ` [${existing.WEBHOOK_URL}]` : ''}: `,
+    'Webhook URL (optional)',
     existing.WEBHOOK_URL || ''
   );
 
-  // API key for HTTP auth
-  const useApiKey = await prompt(
-    rl,
-    '? Protect server with API key? (y/n) [y]: ',
-    existing.MCP_API_KEY ? 'y' : 'y'
-  );
+  // API key
+  process.stdout.write('\n');
+  const useApiKey = await confirm(rl, 'Protect server with API key?', true);
 
   let apiKey = existing.MCP_API_KEY || '';
-  if (useApiKey.toLowerCase() !== 'n') {
+  if (useApiKey) {
     if (!apiKey) {
       apiKey = crypto.randomBytes(24).toString('hex');
     }
-    console.log('');
-    console.log(`  API Key: ${apiKey}`);
-    console.log('');
+    process.stdout.write(success(`API Key: ${code(apiKey)}\n`));
+    process.stdout.write(`${muted('  Save this — you\'ll need it to connect')}\n`);
   }
 
-  // For server mode: start auth server first, then tunnel to it
-  let redirectUri;
+  // ── Step 4: Redirect URI ──
+  process.stdout.write(step(++stepNum, 'OAuth Redirect URI'));
+  let redirectUri = existing.REDIRECT_URI || 'http://127.0.0.1:3080/callback';
   let authTunnelProc = null;
-  let authServerHandle = null;
 
-  if (isServer) {
-    redirectUri = existing.REDIRECT_URI || 'http://127.0.0.1:3080/callback';
-  } else {
-    redirectUri = existing.REDIRECT_URI || 'http://127.0.0.1:3080/callback';
-  }
-
-  const redirectUriInput = await prompt(
-    rl,
-    `? Redirect URI [${redirectUri}]: `,
-    redirectUri
-  );
+  const redirectUriInput = await prompt(rl, 'Redirect URI', redirectUri);
   redirectUri = redirectUriInput;
 
-  // Write .env
+  // Write .env early
   const envContent = [
     `SPOTIFY_CLIENT_ID=${clientId}`,
     clientSecret ? `SPOTIFY_CLIENT_SECRET=${clientSecret}` : '# SPOTIFY_CLIENT_SECRET=',
@@ -230,59 +216,62 @@ async function main() {
   ].join('\n');
 
   fs.writeFileSync(ENV_PATH, envContent);
-  console.log('  Configuration saved to .env');
 
-  // OAuth flow
-  console.log('');
-  console.log('  Starting OAuth authorization flow...');
-  console.log('');
+  // ── Step 5: OAuth Flow ──
+  process.stdout.write(step(++stepNum, 'OAuth Authorization'));
 
   const codeVerifier = generateCodeVerifier();
   const codeChallenge = await generateCodeChallenge(codeVerifier);
 
-  // Start auth server listener FIRST
-  console.log('  Starting callback listener...');
-  authServerHandle = await startAuthServer(redirectUri);
+  // Start auth server
+  const s = spinner('Starting callback listener');
+  let authServerHandle;
+  try {
+    authServerHandle = await startAuthServer(redirectUri);
+    s.succeed(`Callback server on ${code(`http://0.0.0.0:3080`)}`);
+  } catch (err) {
+    s.fail(`Failed to start callback server: ${err.message}`);
+    rl.close();
+    process.exit(1);
+  }
   const authPromise = authServerHandle.promise;
 
-  // For server mode: start tunnel to the running server, then build auth URL with tunnel redirect
+  // Server mode: start tunnel
   if (isServer) {
-    console.log('');
-    console.log('  Starting OAuth tunnel...');
+    process.stdout.write('\n');
+    const ts = spinner('Creating cloudflared tunnel');
     try {
       const { url: tunnelUrl, proc } = await startAuthTunnel(3080);
       authTunnelProc = proc;
+      ts.succeed(`Tunnel ready: ${code(tunnelUrl)}`);
 
-      // Verify tunnel can reach the auth server
-      console.log('  Verifying tunnel connectivity...');
+      const tunnelRedirect = `${tunnelUrl}/callback`;
+
+      // Verify tunnel
+      const hs = spinner('Verifying tunnel connectivity');
       try {
         const healthRes = await fetch(`${tunnelUrl}/health`);
         const healthData = await healthRes.json();
-        console.log(`  Tunnel health check: ${JSON.stringify(healthData)}`);
-      } catch (err) {
-        console.log(`  WARNING: Tunnel health check failed: ${err.message}`);
-        console.log('  The tunnel may not be fully ready yet.');
+        hs.succeed(`Tunnel health check passed`);
+      } catch {
+        hs.fail(`Tunnel health check failed — tunnel may need a moment`);
       }
 
-      const tunnelRedirect = `${tunnelUrl}/callback`;
-      console.log('');
-      console.log('===========================================');
-      console.log('  ADD THIS REDIRECT URI TO SPOTIFY APP:');
-      console.log(`  ${tunnelRedirect}`);
-      console.log('===========================================');
-      console.log('');
-      console.log('  1. Go to https://developer.spotify.com/dashboard');
-      console.log('  2. Open your app settings');
-      console.log('  3. Add Redirect URI: ' + tunnelRedirect);
-      console.log('  4. Click Save');
-      console.log('');
-      console.log('  IMPORTANT: The URL changes every time you run setup.');
-      console.log('  Make sure you add the EXACT URL shown above.');
-      console.log('');
+      process.stdout.write(box(
+        `You must add this redirect URI to your Spotify app:\n\n` +
+        `${highlight(tunnelRedirect)}\n\n` +
+        `1. Go to ${code('https://developer.spotify.com/dashboard')}\n` +
+        `2. Open your app settings\n` +
+        `3. Add Redirect URI\n` +
+        `4. Click Save\n\n` +
+        `${muted('The URL changes every time you run setup.')}`,
+        c.yellow
+      ));
+      process.stdout.write('\n');
 
-      await prompt(rl, '  Press Enter after adding the redirect URI to Spotify... ');
+      await prompt(rl, 'Press Enter after adding the redirect URI to Spotify', '');
 
-      // Update .env and redirectUri with the tunnel URL
+      // Update .env
       const updatedEnv = envContent.replace(
         `REDIRECT_URI=${redirectUri}`,
         `REDIRECT_URI=${tunnelRedirect}`
@@ -290,86 +279,57 @@ async function main() {
       fs.writeFileSync(ENV_PATH, updatedEnv);
       redirectUri = tunnelRedirect;
     } catch (err) {
-      console.error(`  Tunnel failed: ${err.message}`);
-      console.log('  Using localhost redirect.');
+      ts.fail(`Tunnel failed: ${err.message}`);
+      process.stdout.write(warn('Falling back to localhost redirect\n'));
     }
   }
 
-  // Build auth URL AFTER redirectUri is finalized (tunnel URL in server mode)
+  // Build auth URL
   const authUrl = buildAuthorizationUrl(clientId, redirectUri, codeChallenge);
 
-  console.log('  Open this URL in your browser to authorize:');
-  console.log('');
-  console.log(`  ${authUrl}`);
-  console.log('');
-  console.log('  (browser will open automatically if possible)');
-  console.log('');
+  process.stdout.write('\n');
+  process.stdout.write(box(
+    `Open this URL in your browser to authorize:\n\n` +
+    `${highlight(authUrl)}\n\n` +
+    `${muted('(browser will open automatically if possible)')}`,
+    c.cyan
+  ));
+  process.stdout.write('\n');
 
   openBrowser(authUrl);
 
-  console.log('  Waiting for authorization callback...');
-  console.log('');
-
+  const ws = spinner('Waiting for authorization');
   try {
     const code = await authPromise;
-    console.log(`  Authorization code received!`);
-    console.log(`  Exchanging for tokens...`);
-    console.log(`  redirect_uri: ${redirectUri}`);
+    ws.succeed('Authorization code received');
 
-    const tokens = await exchangeCodeForTokens(
-      clientId,
-      code,
-      redirectUri,
-      codeVerifier
-    );
+    const es = spinner('Exchanging code for tokens');
+    const tokens = await exchangeCodeForTokens(clientId, code, redirectUri, codeVerifier);
     saveTokens(tokens);
-
-    console.log('');
-    console.log('  Authorization successful!');
-    console.log('  Tokens saved to .spotify-auth.json');
+    es.succeed('Tokens saved to .spotify-auth.json');
   } catch (err) {
-    console.error(`  Authorization failed: ${err.message}`);
-    // Kill auth tunnel if running
+    ws.fail(`Authorization failed: ${err.message}`);
     if (authTunnelProc) authTunnelProc.kill();
     rl.close();
     process.exit(1);
   }
 
-  // Kill auth tunnel - no longer needed
+  // Kill auth tunnel
   if (authTunnelProc) {
     authTunnelProc.kill();
-    console.log('  Auth tunnel closed.');
   }
 
-  // Ask about tunnel for MCP server
-  console.log('');
-  const useTunnel = await prompt(
-    rl,
-    `? Expose MCP server via public tunnel? (y/n) [y]: `,
-    'y'
-  );
-  const wantsTunnel = useTunnel.toLowerCase() !== 'n';
+  // ── Step 6: Launch Options ──
+  process.stdout.write(step(++stepNum, 'Launch Options'));
 
-  // Ask about pm2
-  console.log('');
-  const usePm2 = await prompt(
-    rl,
-    `? Run as background service with pm2? (y/n) [y]: `,
-    'y'
-  );
-  const wantsPm2 = usePm2.toLowerCase() !== 'n';
+  const wantsTunnel = await confirm(rl, 'Expose MCP server via public tunnel?', true);
+  const wantsPm2 = await confirm(rl, 'Run as background service with pm2?', true);
 
   rl.close();
 
   if (wantsPm2) {
     ensurePm2();
   }
-
-  console.log('');
-  console.log('===========================================');
-  console.log('  Starting Spotify MCP server...');
-  console.log('===========================================');
-  console.log('');
 
   const indexScript = path.join(ROOT, 'src', 'index.js');
   const port = mcpPort || '3000';
@@ -378,29 +338,32 @@ async function main() {
     const args = ['--port', port, '--host', '127.0.0.1'];
     if (wantsTunnel) args.push('--tunnel');
 
+    const s = spinner('Starting server with pm2');
     const pm2Name = 'spotify-mcp';
-    execSync(`pm2 delete ${pm2Name} 2>/dev/null || true`, { stdio: 'ignore' });
-    const pm2Cmd = `pm2 start "${indexScript}" --name "${pm2Name}" --cwd "${ROOT}" -- ${args.join(' ')}`;
-    execSync(pm2Cmd, { stdio: 'inherit' });
-    execSync('pm2 save', { stdio: 'ignore' });
+    try {
+      execSync(`pm2 delete ${pm2Name} 2>/dev/null || true`, { stdio: 'ignore' });
+      const pm2Cmd = `pm2 start "${indexScript}" --name "${pm2Name}" --cwd "${ROOT}" -- ${args.join(' ')}`;
+      execSync(pm2Cmd, { stdio: 'ignore' });
+      execSync('pm2 save', { stdio: 'ignore' });
+      s.succeed('Server running in background');
+    } catch (err) {
+      s.fail(`Failed to start server: ${err.message}`);
+      process.exit(1);
+    }
 
-    console.log('');
-    console.log('  Server running in background via pm2.');
-    console.log('');
-    console.log('  Useful commands:');
-    console.log('    pm2 logs spotify-mcp     # view logs');
-    console.log('    pm2 status               # check status');
-    console.log('    pm2 restart spotify-mcp  # restart');
-    console.log('    pm2 stop spotify-mcp     # stop');
-    console.log('    pm2 delete spotify-mcp   # remove');
-    console.log('');
+    process.stdout.write('\n');
+    process.stdout.write(`${muted('  Manage with:')}\n`);
+    process.stdout.write(`    ${code('pm2 logs spotify-mcp')}     ${muted('# view logs')}\n`);
+    process.stdout.write(`    ${code('pm2 status')}               ${muted('# check status')}\n`);
+    process.stdout.write(`    ${code('pm2 restart spotify-mcp')}  ${muted('# restart')}\n`);
+    process.stdout.write(`    ${code('pm2 stop spotify-mcp')}     ${muted('# stop')}\n`);
+    process.stdout.write(`    ${code('pm2 delete spotify-mcp')}   ${muted('# remove')}\n`);
   } else {
     const args = ['src/index.js', '--port', port, '--host', '127.0.0.1'];
     if (wantsTunnel) args.push('--tunnel');
 
-    console.log(`  Running: node ${args.join(' ')}`);
-    console.log('  (Ctrl+C to stop)');
-    console.log('');
+    process.stdout.write(`\n  ${muted('Running:')} ${code(`node ${args.join(' ')}`)}\n`);
+    process.stdout.write(`  ${muted('(Ctrl+C to stop)')}\n\n`);
 
     const child = spawn('node', args, { cwd: ROOT, stdio: 'inherit' });
     child.on('close', () => process.exit(0));
@@ -409,54 +372,38 @@ async function main() {
     return;
   }
 
-  // Print connection instructions
-  console.log('===========================================');
-  console.log('  All set! Here is how to connect:');
-  console.log('===========================================');
-  console.log('');
+  // ── Connection Instructions ──
+  process.stdout.write(header('All Set'));
 
   if (wantsTunnel) {
-    console.log('  The server is running with a public tunnel.');
-    console.log('  Check the tunnel URL in the logs:');
-    console.log('    pm2 logs spotify-mcp --lines 20');
-    console.log('');
-    console.log('  The URL will look like:');
-    console.log(`    https://xxxx.trycloudflare.com/mcp`);
-    console.log('');
-    console.log('  Add to claude_desktop_config.json:');
-    console.log('  {');
-    console.log('    "mcpServers": {');
-    console.log('      "spotify": {');
-    console.log('        "url": "<tunnel-url>/mcp",');
+    process.stdout.write(`${muted('  Find the tunnel URL in the logs:')}\n`);
+    process.stdout.write(`    ${code('pm2 logs spotify-mcp --lines 20')}\n\n`);
+    process.stdout.write(`${muted('  The URL will look like:')}\n`);
+    process.stdout.write(`    ${code('https://xxxx.trycloudflare.com/mcp')}\n\n`);
+    process.stdout.write(`${muted('  Add to claude_desktop_config.json:')}\n`);
+
+    const clientConfig = { mcpServers: { spotify: { url: '<tunnel-url>/mcp' } } };
     if (apiKey) {
-      console.log('        "headers": {');
-      console.log(`          "Authorization": "Bearer ${apiKey}"`);
-      console.log('        }');
+      clientConfig.mcpServers.spotify.headers = { Authorization: `Bearer ${apiKey}` };
     }
-    console.log('      }');
-    console.log('    }');
-    console.log('  }');
+    process.stdout.write(config(clientConfig) + '\n');
   } else {
-    console.log('  Local mode:');
-    console.log('');
-    console.log('  {');
-    console.log('    "mcpServers": {');
-    console.log('      "spotify": {');
-    console.log('        "command": "node",');
-    console.log(
-      `        "args": ["${path.join(ROOT, 'src', 'index.js')}", "--stdio"]`
-    );
-    console.log('      }');
-    console.log('    }');
-    console.log('  }');
+    process.stdout.write(`${muted('  Add to claude_desktop_config.json:')}\n\n`);
+    const clientConfig = {
+      mcpServers: {
+        spotify: {
+          command: 'node',
+          args: [path.join(ROOT, 'src', 'index.js'), '--stdio'],
+        },
+      },
+    };
+    process.stdout.write(config(clientConfig) + '\n');
   }
 
-  console.log('');
-  console.log('  Done!');
-  console.log('');
+  process.stdout.write(`\n  ${c.green}${c.bold}Done!${c.reset}\n\n`);
 }
 
 main().catch((err) => {
-  console.error('Setup failed:', err.message);
+  console.log(error(`Setup failed: ${err.message}`));
   process.exit(1);
 });

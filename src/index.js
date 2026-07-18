@@ -6,6 +6,16 @@ import { createSpotifyMcpServer } from './create-server.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
 
+const c = {
+  reset: '\x1b[0m',
+  bold: '\x1b[1m',
+  dim: '\x1b[2m',
+  green: '\x1b[32m',
+  yellow: '\x1b[33m',
+  cyan: '\x1b[36m',
+  gray: '\x1b[90m',
+};
+
 function loadEnv() {
   const envPath = path.join(ROOT, '.env');
   try {
@@ -68,7 +78,7 @@ async function main() {
 
   if (!process.env.SPOTIFY_CLIENT_ID) {
     console.error(
-      'Error: SPOTIFY_CLIENT_ID not set. Run `node setup.js` first or add it to .env'
+      `${c.red}Error:${c.reset} SPOTIFY_CLIENT_ID not set. Run ${c.cyan}node setup.js${c.reset} first.`
     );
     process.exit(1);
   }
@@ -92,18 +102,18 @@ async function main() {
       try {
         const { url, type } = await startTunnel(opts.port);
         const apiKey = process.env.MCP_API_KEY;
-        const config = { mcpServers: { spotify: { url: `${url}/mcp` } } };
+        const clientConfig = { mcpServers: { spotify: { url: `${url}/mcp` } } };
         if (apiKey) {
-          config.mcpServers.spotify.headers = { Authorization: `Bearer ${apiKey}` };
+          clientConfig.mcpServers.spotify.headers = { Authorization: `Bearer ${apiKey}` };
         }
-        console.log(`\nTunnel (${type}): ${url}/mcp\n`);
-        if (apiKey) console.log(`API Key: ${apiKey}\n`);
-        console.log('Add to claude_desktop_config.json:');
-        console.log(JSON.stringify(config, null, 2));
+        console.log(`\n${c.bold}${c.green}Tunnel ready:${c.reset} ${c.cyan}${url}/mcp${c.reset}\n`);
+        if (apiKey) console.log(`${c.gray}API Key:${c.reset} ${apiKey}\n`);
+        console.log(`${c.gray}Add to claude_desktop_config.json:${c.reset}`);
+        console.log(JSON.stringify(clientConfig, null, 2));
         console.log('');
       } catch (err) {
-        console.error(`Tunnel failed: ${err.message}`);
-        console.log(`Server still running at http://localhost:${opts.port}/mcp`);
+        console.error(`${c.red}Tunnel failed:${c.reset} ${err.message}`);
+        console.log(`${c.gray}Server still running at http://localhost:${opts.port}/mcp${c.reset}`);
       }
     }
   }
@@ -113,6 +123,6 @@ process.on('SIGINT', () => process.exit(0));
 process.on('SIGTERM', () => process.exit(0));
 
 main().catch((err) => {
-  console.error('Fatal error:', err);
+  console.error(`${c.red}Fatal error:${c.reset}`, err);
   process.exit(1);
 });
